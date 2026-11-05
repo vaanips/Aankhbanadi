@@ -1,0 +1,80 @@
+
+# ==============================
+# Python cache files
+# ==============================
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+
+# ==============================
+# Virtual environments
+# ==============================
+.venv/
+venv/
+env/
+.aankh/
+ENV/
+
+# ==============================
+# Environment variables / secrets
+# ==============================
+.env
+.env.*
+!.env.example
+
+# ==============================
+# Datasets (large files)
+# ==============================
+/dataset/
+/datasets/
+/drishti_dataset/
+*.zip
+
+# ==============================
+# YOLO model weights
+# ==============================
+*.pt
+*.pth
+*.onnx
+*.engine
+*.torchscript
+
+# ==============================
+# YOLO training / evaluation outputs
+# ==============================
+runs/
+results/
+wandb/
+mlruns/
+
+# ==============================
+# Temporary files and logs
+# ==============================
+*.log
+*.tmp
+*.bak
+*.cache
+
+# ==============================
+# Audio and video recordings
+# ==============================
+*.wav
+*.mp3
+*.mp4
+*.avi
+
+# ==============================
+# Jupyter checkpoints
+# ==============================
+.ipynb_checkpoints/
+
+# ==============================
+# IDE and OS files
+# ==============================
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+desktop.ini
