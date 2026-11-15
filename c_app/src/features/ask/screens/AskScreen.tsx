@@ -1,0 +1,1 @@
+export { AskDrishtiScreen as AskScreen } from '../../ask-drishti/screens/AskDrishtiScreen';

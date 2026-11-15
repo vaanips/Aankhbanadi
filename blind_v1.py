@@ -882,7 +882,7 @@ def parse_step_query(query):
 def listen_for_voice_query(detections):
     """Listen to one push-to-talk command; keep automatic TTS quiet while recording."""
     recognizer = sr.Recognizer()
-    voice_query_active.set()
+    # voice_query_active.set()
     # Clear queued automatic messages before recording.
     while True:
         try:
@@ -962,8 +962,11 @@ def listen_for_voice_query(detections):
     except Exception as error:
         print("Microphone recording error:", error, flush=True)
         announce("Microphone unavailable. Please check microphone access.", priority=True)
+    # finally:
+    #     voice_query_active.clear()
     finally:
         voice_query_active.clear()
+        voice_query_running.clear()
 # 5. TEXT-TO-SPEECH*
 
 # ============================================================*
@@ -972,12 +975,18 @@ speech_queue = queue.Queue(maxsize=2)
 
 
 
+# stop_speech = threading.Event()
+# auto_announcements_enabled = threading.Event()
+# auto_announcements_enabled.set()  # Preserve current startup behaviour
+# # voice_query_active = threading.Event()
+# voice_query_running = threading.Event()
+
 stop_speech = threading.Event()
 auto_announcements_enabled = threading.Event()
-auto_announcements_enabled.set()  # Preserve current startup behaviour
+auto_announcements_enabled.set()
+
 voice_query_active = threading.Event()
-
-
+voice_query_running = threading.Event()
 
 
 
@@ -1080,9 +1089,10 @@ def speech_worker():
             break
 
 
-
-        if voice_query_active.is_set():
-            continue
+        while voice_query_active.is_set() and not stop_speech.is_set():
+            time.sleep(0.05)
+        # if voice_query_active.is_set():
+        #     continue
 
 
 
@@ -2127,16 +2137,38 @@ def main():
             # Press M to ask a question or say start/stop to control announcements.*
 
             # Press Q to quit.*
-
             key = cv2.waitKey(1) & 0xFF
 
             if key == ord("m"):
 
-                listen_for_voice_query(detections)
+                if not voice_query_running.is_set():
+
+                    voice_query_running.set()
+                    voice_query_active.set()
+
+                    # Capture the latest detections for this question.
+                    detection_snapshot = [
+                        item.copy() for item in detections
+                    ]
+
+                    threading.Thread(
+                        target=listen_for_voice_query,
+                        args=(detection_snapshot,),
+                        daemon=True
+                    ).start()
 
             elif key == ord("q"):
-
                 break
+
+            # key = cv2.waitKey(1) & 0xFF
+
+            # if key == ord("m"):
+
+            #     listen_for_voice_query(detections)
+
+            # elif key == ord("q"):
+
+            #     break
 
 
 

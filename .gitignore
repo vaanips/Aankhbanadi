@@ -58,6 +58,13 @@ mlruns/
 *.cache
 
 # ==============================
+# UDID auth scan captures (local testing)
+# ==============================
+server/udid_scans/*
+!server/udid_scans/.gitkeep
+
+
+# ==============================
 # Audio and video recordings
 # ==============================
 *.wav
