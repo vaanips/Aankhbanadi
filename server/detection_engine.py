@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import io
 import math
+import os
 import time
 import uuid
 from pathlib import Path
@@ -20,7 +21,12 @@ import numpy as np
 import torch
 from ultralytics import YOLO
 
-MODEL_PATH = Path(__file__).resolve().parent.parent / "yolo26x.pt"
+MODEL_PATH = Path(
+    os.environ.get(
+        "DRISHTI_MODEL_PATH",
+        str(Path(__file__).resolve().parent.parent / "yolo26x.pt"),
+    )
+)
 IMAGE_SIZE = 640
 # Slightly lower than blind_v1 so phone JPEG frames keep more detections
 CONFIDENCE_THRESHOLD = 0.35

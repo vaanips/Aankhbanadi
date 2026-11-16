@@ -7,6 +7,7 @@ Reject chat/IDE screens that only mention Blindness/UDID.
 
 from __future__ import annotations
 
+import io
 import json
 import re
 from difflib import SequenceMatcher
@@ -14,6 +15,7 @@ from typing import Any
 
 import cv2
 import numpy as np
+from PIL import Image, ImageOps, UnidentifiedImageError
 
 VISUAL_IMPAIRMENT_TERMS = (
     "blindness",
@@ -109,13 +111,25 @@ def get_reader():
     if _reader is None:
         import easyocr
 
-        _reader = easyocr.Reader(["en"], gpu=True)
+        try:
+            import torch
+
+            use_gpu = torch.cuda.is_available()
+        except ImportError:
+            use_gpu = False
+        _reader = easyocr.Reader(["en"], gpu=use_gpu)
     return _reader
 
 
 def decode_image(image_bytes: bytes) -> np.ndarray:
-    arr = np.frombuffer(image_bytes, dtype=np.uint8)
-    frame = cv2.imdecode(arr, cv2.IMREAD_COLOR)
+    frame: np.ndarray | None = None
+    try:
+        with Image.open(io.BytesIO(image_bytes)) as image:
+            corrected = ImageOps.exif_transpose(image).convert("RGB")
+            frame = cv2.cvtColor(np.asarray(corrected), cv2.COLOR_RGB2BGR)
+    except (UnidentifiedImageError, OSError, ValueError):
+        arr = np.frombuffer(image_bytes, dtype=np.uint8)
+        frame = cv2.imdecode(arr, cv2.IMREAD_COLOR)
     if frame is None:
         raise ValueError("Could not decode ID image")
     return frame
