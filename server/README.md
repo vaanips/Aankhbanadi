@@ -1,9 +1,27 @@
 # Drishti Detection Server (Local Laptop)
 
-Runs `yolo26x.pt` on this PC and exposes HTTP detection for the phone app.
+Runs `yolo26x.pt` on this PC and exposes HTTP detection for the phone app. When
+`yolov8s-worldv2.pt` is available, a second local model adds detections for
+household items that are not in COCO, including cabinets, TV stands, idols,
+remote controls, buckets, boxes, and clothes-drying racks. Both models run
+locally; no image is sent to a cloud inference service.
+Live inference uses 640px input and a 0.10 confidence threshold to retain more
+small and distant objects; expect some additional false positives.
 The model file is expected at the repository root (`..\yolo26x.pt`) or can be set with
 `DRISHTI_MODEL_PATH`; weights are not included in Git. `start.ps1` also checks the
 legacy OneDrive `Desktop\Drishti\yolo26x.pt` location.
+The optional YOLO-World weights are expected at the repository root or can be
+set with `DRISHTI_WORLD_MODEL_PATH`. Download them once from the official
+Ultralytics asset release by running this from the repository root after installing
+the server dependencies:
+
+```powershell
+python -c "from ultralytics import YOLOWorld; YOLOWorld('yolov8s-worldv2.pt')"
+```
+
+The server applies higher, class-specific confidence thresholds to these extra
+labels. Distance and step counts are still approximate estimates, not a safety
+guarantee; the 21 supplied room photos are not enough to certify general accuracy.
 
 ## 1. Install (once)
 

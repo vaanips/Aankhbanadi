@@ -6,6 +6,7 @@ export interface AnnouncementItem {
   priority: SpeechPriority;
   createdAt: number;
   dedupeKey?: string;
+  scope?: string;
 }
 
 function generateId(): string {
@@ -19,6 +20,7 @@ export class AnnouncementQueue {
     text: string,
     priority: SpeechPriority = 'normal',
     dedupeKey?: string,
+    scope?: string,
   ): AnnouncementItem | null {
     const normalized = text.trim();
     if (!normalized) {
@@ -34,6 +36,7 @@ export class AnnouncementQueue {
       priority,
       createdAt: Date.now(),
       dedupeKey: key,
+      scope,
     };
     this.items.push(item);
     this.sort();
@@ -56,6 +59,10 @@ export class AnnouncementQueue {
 
   clear(): void {
     this.items = [];
+  }
+
+  clearScope(scope: string): void {
+    this.items = this.items.filter(item => item.scope !== scope);
   }
 
   removeDuplicates(): void {

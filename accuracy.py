@@ -1,6 +1,8 @@
 
 from pathlib import Path
 import json
+import os
+import random
 import torch
 import numpy as np
 from ultralytics import YOLO
@@ -12,18 +14,30 @@ from pycocotools.cocoeval import COCOeval
 # DRISHTI - GROUPED COCO EVALUATION WITH TEST-TIME AUGMENTATION
 # ============================================================
 
-MODEL_PATH = "yolo26x.pt"
+MODEL_PATH = os.environ.get("DRISHTI_MODEL_PATH", "yolo26x.pt")
 COCO_ROOT = Path(
-    r"C:\Users\srane\OneDrive\Desktop\datasets\coco"
+    os.environ.get(
+        "DRISHTI_COCO_ROOT",
+        r"C:\Users\srane\OneDrive\Desktop\datasets\coco",
+    )
 )
 
-IMAGE_SIZE = 640
+IMAGE_SIZE = int(os.environ.get("DRISHTI_IMAGE_SIZE", "640"))
 BATCH_SIZE = 2
 CONFIDENCE = 0.001
 DEVICE = 0 if torch.cuda.is_available() else "cpu"
+TEST_TIME_AUGMENTATION = os.environ.get("DRISHTI_TTA", "true").lower() in {
+    "1",
+    "true",
+    "yes",
+}
+MAX_EVAL_IMAGES = int(os.environ.get("DRISHTI_MAX_EVAL_IMAGES", "0"))
 
 OUTPUT_DIR = Path(
-    "runs/evaluation/yolo26x_grouped_coco_tta"
+    os.environ.get(
+        "DRISHTI_EVAL_OUTPUT",
+        f"runs/evaluation/yolo26x_grouped_coco_{IMAGE_SIZE}px",
+    )
 )
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -224,7 +238,7 @@ def create_grouped_predictions(model, images, image_dir, output_file):
             device=DEVICE,
             conf=CONFIDENCE,
             max_det=300,
-            augment=True,
+            augment=TEST_TIME_AUGMENTATION,
             verbose=False,
             stream=False,
         )
@@ -342,7 +356,7 @@ def main():
     print("=" * 60)
     print(f"Device: {DEVICE}")
     print(f"Image size: {IMAGE_SIZE}")
-    print("Test-time augmentation: enabled")
+    print(f"Test-time augmentation: {'enabled' if TEST_TIME_AUGMENTATION else 'disabled'}")
 
     annotation_file, image_dir = find_coco_files()
 
@@ -358,6 +372,22 @@ def main():
         annotation_file,
         gt_file,
     )
+
+    if MAX_EVAL_IMAGES > 0 and MAX_EVAL_IMAGES < len(grouped["images"]):
+        selected = random.Random(42).sample(
+            grouped["images"],
+            MAX_EVAL_IMAGES,
+        )
+        selected_ids = {image["id"] for image in selected}
+        grouped["images"] = selected
+        grouped["annotations"] = [
+            annotation
+            for annotation in grouped["annotations"]
+            if annotation["image_id"] in selected_ids
+        ]
+        with open(gt_file, "w", encoding="utf-8") as file:
+            json.dump(grouped, file)
+        print(f"Sampled validation images: {len(selected):,}")
 
     create_grouped_predictions(
         model,

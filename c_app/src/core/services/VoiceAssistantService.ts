@@ -2,6 +2,7 @@ import { VoiceAssistantState } from '../types/voice.types';
 import { TextToSpeechService } from './TextToSpeechService';
 import { SpeechRecognitionService } from './SpeechRecognitionService';
 import { AudioSessionService } from './AudioSessionService';
+import { announcementManager } from '../../domain/announcements/AnnouncementManager';
 import { createLogger } from '../utils/logger';
 
 const log = createLogger('VoiceAssistantService');
@@ -55,6 +56,7 @@ class VoiceAssistantServiceImpl {
     this.state = 'IDLE';
     this.listeners.forEach(l => l(this.state));
     AudioSessionService.resumeAnnouncementsAfterListening();
+    announcementManager.resumeAfterListening();
   }
 
   /**
@@ -70,15 +72,13 @@ class VoiceAssistantServiceImpl {
     this.pushToTalkActive = true;
     const token = ++this.sessionToken;
 
-    if (this.state === 'SPEAKING' || this.state === 'PAUSED') {
-      await TextToSpeechService.stop();
-    }
+    AudioSessionService.pauseAnnouncementsForListening();
+    announcementManager.pauseWhileListening();
     if (!this.transition('LISTENING')) {
       this.forceIdle();
       return;
     }
 
-    AudioSessionService.pauseAnnouncementsForListening();
     await TextToSpeechService.stop();
 
     try {

@@ -31,6 +31,8 @@
 		<key>NSAllowsLocalNetworking</key>
 		<true/>
 	</dict>
+		<key>NSLocalNetworkUsageDescription</key>
+		<string>Drishti connects to your laptop on the same Wi-Fi for live object detection and UDID scanning.</string>
 	<key>NSCameraUsageDescription</key>
 	<string>Drishti needs camera access to describe your surroundings during camera assistance.</string>
 	<key>NSMicrophoneUsageDescription</key>

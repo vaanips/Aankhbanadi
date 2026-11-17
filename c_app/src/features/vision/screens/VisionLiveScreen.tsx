@@ -1,10 +1,5 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import {
-  ActivityIndicator,
-  StyleSheet,
-  Text,
-  View,
-} from 'react-native';
+import { ActivityIndicator, StyleSheet, Text, View } from 'react-native';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import { runOnJS } from 'react-native-reanimated';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -22,7 +17,7 @@ type CameraRef = {
 };
 
 let CameraView: React.ComponentType<Record<string, unknown>> | null = null;
-let useCameraDevice: ((position: 'back' | 'front') => unknown) | null = null;
+let useCameraDevice: (position: 'back' | 'front') => unknown = () => null;
 
 try {
   // eslint-disable-next-line @typescript-eslint/no-var-requires
@@ -31,18 +26,20 @@ try {
   useCameraDevice = vision.useCameraDevice;
 } catch {
   CameraView = null;
-  useCameraDevice = null;
 }
 
 const LiveCamera = React.forwardRef<
   CameraRef,
   { active: boolean; allowed: boolean; onPermissionLost?: () => void }
 >(function LiveCamera({ active, allowed, onPermissionLost }, ref) {
-  const device = useCameraDevice ? useCameraDevice('back') : null;
+  const device = useCameraDevice('back');
 
   if (!allowed || !CameraView || !device) {
     return (
-      <View style={styles.cameraFallback} accessibilityLabel="Camera preview unavailable">
+      <View
+        style={styles.cameraFallback}
+        accessibilityLabel="Camera preview unavailable"
+      >
         <Text style={styles.fallbackTitle}>Camera</Text>
         <Text style={styles.fallbackBody}>
           {allowed
@@ -89,7 +86,6 @@ export function VisionLiveScreen(): React.JSX.Element {
   } = useBlindAssist();
 
   const cameraRef = useRef<CameraRef | null>(null);
-  const [frameError, setFrameError] = useState<string | null>(null);
   const [camPermissionLost, setCamPermissionLost] = useState(false);
 
   useEffect(() => {
@@ -107,7 +103,6 @@ export function VisionLiveScreen(): React.JSX.Element {
       }
       const cam = cameraRef.current;
       if (!cam?.takePhoto) {
-        setFrameError('Camera capture not ready');
         return;
       }
       busy = true;
@@ -118,11 +113,9 @@ export function VisionLiveScreen(): React.JSX.Element {
         });
         if (!cancelled && photo?.path) {
           await provider.processFrameFile(photo.path);
-          const err = provider.getLastError();
-          setFrameError(err);
         }
-      } catch (error) {
-        setFrameError(error instanceof Error ? error.message : 'Frame capture failed');
+      } catch {
+        // The next scheduled frame retries without exposing transient network errors.
       } finally {
         busy = false;
       }
@@ -171,7 +164,6 @@ export function VisionLiveScreen(): React.JSX.Element {
               active={cameraReady && !permissionDenied && !camPermissionLost}
               onPermissionLost={() => {
                 setCamPermissionLost(true);
-                setFrameError('Camera permission denied');
               }}
             />
             <DetectionOverlay detections={detections} />
@@ -205,17 +197,15 @@ export function VisionLiveScreen(): React.JSX.Element {
                 Heard: {heardText}
               </Text>
             ) : null}
-            {frameError ? (
-              <Text style={styles.errorChip} accessibilityLiveRegion="polite">
-                {frameError}
-              </Text>
-            ) : null}
           </View>
 
           {permissionDenied ? (
             <View style={styles.permissionBox}>
               <Text style={styles.fallbackTitle}>Camera permission needed</Text>
-              <PrimaryButton label="Open settings" onPress={() => void openSettings()} />
+              <PrimaryButton
+                label="Open settings"
+                onPress={() => void openSettings()}
+              />
             </View>
           ) : null}
         </SafeAreaView>
@@ -297,18 +287,6 @@ const styles = StyleSheet.create({
     color: '#ECFDF5',
     backgroundColor: 'rgba(22, 163, 74, 0.7)',
     fontSize: 13,
-    fontWeight: '600',
-    maxWidth: '90%',
-    textAlign: 'center',
-  },
-  errorChip: {
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 16,
-    overflow: 'hidden',
-    color: '#FEF2F2',
-    backgroundColor: 'rgba(220, 38, 38, 0.75)',
-    fontSize: 12,
     fontWeight: '600',
     maxWidth: '90%',
     textAlign: 'center',

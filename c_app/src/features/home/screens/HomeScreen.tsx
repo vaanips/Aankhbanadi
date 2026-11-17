@@ -82,8 +82,21 @@ export function HomeScreen(): React.JSX.Element {
 
         <ActionCard
           title="Start Camera Assistance"
-          description="Open the camera tab and begin demo scene assistance."
-          onPress={() => announceAndNavigate('Opening camera assistance.', 'Camera')}
+          description="Open the camera tab and begin live object detection."
+          onPress={() =>
+            announceAndNavigate('Opening camera assistance.', 'Camera')
+          }
+        />
+        <ActionCard
+          title="Scan disability ID"
+          description="Verify a UDID card using the laptop connected to this Wi-Fi."
+          onPress={() => {
+            announcementManager.announce(
+              'Opening disability ID scan.',
+              'normal',
+            );
+            navigation.navigate('UdidAuth');
+          }}
         />
         <ActionCard
           title="Ask Drishti"
@@ -93,7 +106,9 @@ export function HomeScreen(): React.JSX.Element {
         <ActionCard
           title="Voice Assistant"
           description={
-            isListening ? 'Listening… release or tap again to finish.' : 'Tap for push-to-talk voice commands.'
+            isListening
+              ? 'Listening… release or tap again to finish.'
+              : 'Tap for push-to-talk voice commands.'
           }
           onPress={() => {
             void toggleListening();
@@ -103,12 +118,16 @@ export function HomeScreen(): React.JSX.Element {
         <ActionCard
           title="Recent Activity"
           description="Review voice commands, responses, and camera events."
-          onPress={() => announceAndNavigate('Opening recent activity.', 'Activity')}
+          onPress={() =>
+            announceAndNavigate('Opening recent activity.', 'Activity')
+          }
         />
         <ActionCard
           title="Accessibility Settings"
           description="Adjust voice, text size, contrast, and interaction options."
-          onPress={() => announceAndNavigate('Opening accessibility settings.', 'Settings')}
+          onPress={() =>
+            announceAndNavigate('Opening accessibility settings.', 'Settings')
+          }
         />
 
         <QuickControls onHelp={openHelp} />

@@ -19,7 +19,7 @@ from typing import Any
 import cv2
 import numpy as np
 import torch
-from ultralytics import YOLO
+from ultralytics import YOLO, YOLOWorld
 
 MODEL_PATH = Path(
     os.environ.get(
@@ -27,9 +27,33 @@ MODEL_PATH = Path(
         str(Path(__file__).resolve().parent.parent / "yolo26x.pt"),
     )
 )
+WORLD_MODEL_PATH = Path(
+    os.environ.get(
+        "DRISHTI_WORLD_MODEL_PATH",
+        str(Path(__file__).resolve().parent.parent / "yolov8s-worldv2.pt"),
+    )
+)
 IMAGE_SIZE = 640
-# Slightly lower than blind_v1 so phone JPEG frames keep more detections
-CONFIDENCE_THRESHOLD = 0.35
+# Favor recall for small and distant objects; this can add false positives.
+CONFIDENCE_THRESHOLD = 0.10
+WORLD_CLASSES = (
+    "cabinet",
+    "TV stand",
+    "idol statue",
+    "remote control",
+    "bucket",
+    "box on the floor",
+    "clothes drying rack",
+)
+WORLD_CLASS_CONFIDENCE = {
+    "cabinet": 0.30,
+    "tv stand": 0.45,
+    "idol statue": 0.50,
+    "remote control": 0.40,
+    "bucket": 0.50,
+    "box on the floor": 0.60,
+    "clothes drying rack": 0.35,
+}
 # Phone rear cameras are wider than the laptop webcam blind_v1 used (45°)
 VERTICAL_FOV_DEGREES = 58.0
 STEP_LENGTH_METERS = 0.65
@@ -85,6 +109,13 @@ OBJECT_HEIGHTS = {
     "toaster": 0.25,
     "sink": 0.40,
     "refrigerator": 1.70,
+    "cabinet": 1.20,
+    "tv stand": 0.60,
+    "idol statue": 0.45,
+    "remote control": 0.15,
+    "bucket": 0.45,
+    "box on the floor": 0.30,
+    "clothes drying rack": 1.50,
     "sports ball": 0.22,
     "baseball bat": 0.85,
     "baseball glove": 0.30,
@@ -101,9 +132,15 @@ ANIMALS = {
     "bird", "cat", "dog", "horse", "sheep", "cow",
     "elephant", "bear", "zebra", "giraffe",
 }
-FURNITURE = {"chair", "couch", "bed", "dining table", "toilet", "bench"}
+FURNITURE = {
+    "chair", "couch", "bed", "dining table", "toilet", "bench",
+    "cabinet", "tv stand",
+}
 ROAD_SIGNALS = {"traffic light", "stop sign"}
-ELECTRONICS = {"tv", "laptop", "mouse", "remote", "keyboard", "cell phone"}
+ELECTRONICS = {
+    "tv", "laptop", "mouse", "remote", "remote control", "keyboard", "cell phone",
+}
+SHRINES = {"idol statue"}
 KITCHEN_ITEMS = {
     "bottle", "wine glass", "cup", "fork", "knife", "spoon", "bowl",
     "microwave", "oven", "toaster", "sink", "refrigerator",
@@ -115,6 +152,7 @@ SPORTS_ITEMS = {
 OBSTACLES = {
     "fire hydrant", "parking meter", "potted plant",
     "suitcase", "backpack", "handbag", "umbrella",
+    "bucket", "box on the floor", "clothes drying rack",
 }
 
 GROUP_CLASS_NAMES: dict[str, set[str]] = {
@@ -128,6 +166,7 @@ GROUP_CLASS_NAMES: dict[str, set[str]] = {
     "kitchen item": KITCHEN_ITEMS,
     "sports equipment": SPORTS_ITEMS,
     "obstacle": OBSTACLES,
+    "shrine": SHRINES,
 }
 
 
@@ -140,6 +179,8 @@ def get_group(name: str) -> str:
         return "Animal"
     if name in ROAD_SIGNALS:
         return "Road signal"
+    if name in SHRINES:
+        return "Shrine"
     if name in FURNITURE:
         return "Furniture"
     if name in ELECTRONICS:
@@ -165,6 +206,7 @@ def get_group_phrase(group: str) -> str:
         "Kitchen item": "kitchen item",
         "Sports equipment": "sports equipment",
         "Obstacle": "obstacle",
+        "Shrine": "shrine",
         "Object": "object",
     }
     return phrases.get(group, "object")
@@ -234,6 +276,56 @@ def format_box_label(group: str, distance: float | None, confidence: float) -> s
     return f"{group} {confidence:.2f}"
 
 
+def should_keep_world_detection(name: str, confidence: float) -> bool:
+    threshold = WORLD_CLASS_CONFIDENCE.get(name.strip().lower())
+    return threshold is not None and confidence >= threshold
+
+
+def _format_detection(
+    name: str,
+    confidence: float,
+    box: list[float],
+    frame_width: int,
+    frame_height: int,
+    timestamp: int,
+) -> dict[str, Any]:
+    x1, y1, x2, y2 = box
+    box_width = max(0.0, x2 - x1)
+    box_height = max(0.0, y2 - y1)
+    center_x = (x1 + x2) / 2.0
+    group = get_group(name)
+    direction_raw = get_direction(center_x, frame_width)
+    distance = estimate_distance(name, box_height, frame_height, box_width)
+    steps = distance_to_steps(distance)
+    phrase = get_group_phrase(group)
+    label = format_box_label(group, distance, confidence)
+
+    return {
+        "id": str(uuid.uuid4()),
+        "className": name,
+        "category": group,
+        "group": group,
+        "groupPhrase": phrase,
+        "label": label,
+        "confidence": confidence,
+        "boundingBox": {
+            "x": x1 / frame_width,
+            "y": y1 / frame_height,
+            "width": box_width / frame_width,
+            "height": box_height / frame_height,
+        },
+        "box": [x1, y1, x2, y2],
+        "direction": direction_to_contract(direction_raw),
+        "direction_raw": direction_raw,
+        "estimatedDistanceMeters": distance,
+        "estimatedSteps": steps,
+        "distance": distance,
+        "name": name,
+        "timestamp": timestamp,
+        "trackingId": None,
+    }
+
+
 def decode_image_bytes(image_bytes: bytes) -> np.ndarray:
     """Decode JPEG/PNG and apply EXIF orientation (critical for phone captures)."""
     frame: np.ndarray | None = None
@@ -258,7 +350,9 @@ def decode_image_bytes(image_bytes: bytes) -> np.ndarray:
 class DetectionEngine:
     def __init__(self, model_path: Path | None = None) -> None:
         self.model_path = Path(model_path) if model_path else MODEL_PATH
+        self.world_model_path = WORLD_MODEL_PATH
         self.model: YOLO | None = None
+        self.world_model: YOLOWorld | None = None
         self.device: str | int = "cpu"
 
     def load(self) -> dict[str, Any]:
@@ -283,6 +377,22 @@ class DetectionEngine:
             device=self.device,
             verbose=False,
         )
+        if self.world_model_path.exists():
+            self.world_model = YOLOWorld(str(self.world_model_path))
+            self.world_model.set_classes(list(WORLD_CLASSES))
+            self.world_model.predict(
+                source=dummy,
+                imgsz=IMAGE_SIZE,
+                conf=CONFIDENCE_THRESHOLD,
+                device=self.device,
+                verbose=False,
+            )
+        else:
+            print(
+                "YOLO-World weights not found; household-object detection is disabled: "
+                f"{self.world_model_path}",
+                flush=True,
+            )
         return {
             "model": str(self.model_path.name),
             "backend": backend,
@@ -290,6 +400,9 @@ class DetectionEngine:
             "image_size": IMAGE_SIZE,
             "confidence": CONFIDENCE_THRESHOLD,
             "verticalFovDegrees": VERTICAL_FOV_DEGREES,
+            "worldModel": (
+                self.world_model_path.name if self.world_model is not None else None
+            ),
         }
 
     def detect_bgr(self, frame: np.ndarray) -> list[dict[str, Any]]:
@@ -305,6 +418,17 @@ class DetectionEngine:
                 device=self.device,
                 verbose=False,
             )
+            world_results = (
+                self.world_model.predict(
+                    source=frame,
+                    imgsz=IMAGE_SIZE,
+                    conf=CONFIDENCE_THRESHOLD,
+                    device=self.device,
+                    verbose=False,
+                )
+                if self.world_model is not None
+                else []
+            )
 
         now = int(time.time() * 1000)
         detections: list[dict[str, Any]] = []
@@ -315,43 +439,28 @@ class DetectionEngine:
                 class_id = int(box.cls[0].item())
                 confidence = float(box.conf[0].item())
                 name = self.model.names[class_id]
-                x1, y1, x2, y2 = map(float, box.xyxy[0].tolist())
-                box_width = max(0.0, x2 - x1)
-                box_height = max(0.0, y2 - y1)
-                center_x = (x1 + x2) / 2.0
-                group = get_group(name)
-                direction_raw = get_direction(center_x, frame_width)
-                distance = estimate_distance(name, box_height, frame_height, box_width)
-                steps = distance_to_steps(distance)
-                phrase = get_group_phrase(group)
-                label = format_box_label(group, distance, confidence)
-
+                coords = list(map(float, box.xyxy[0].tolist()))
                 detections.append(
-                    {
-                        "id": str(uuid.uuid4()),
-                        "className": name,
-                        "category": group,
-                        "group": group,
-                        "groupPhrase": phrase,
-                        "label": label,
-                        "confidence": confidence,
-                        "boundingBox": {
-                            "x": x1 / frame_width,
-                            "y": y1 / frame_height,
-                            "width": box_width / frame_width,
-                            "height": box_height / frame_height,
-                        },
-                        "box": [x1, y1, x2, y2],
-                        "direction": direction_to_contract(direction_raw),
-                        "direction_raw": direction_raw,
-                        "estimatedDistanceMeters": distance,
-                        "estimatedSteps": steps,
-                        "distance": distance,
-                        "name": name,
-                        "timestamp": now,
-                        "trackingId": None,
-                    }
+                    _format_detection(
+                        name, confidence, coords, frame_width, frame_height, now
+                    )
                 )
+        if self.world_model is not None:
+            for result in world_results:
+                if result.boxes is None:
+                    continue
+                for box in result.boxes:
+                    class_id = int(box.cls[0].item())
+                    confidence = float(box.conf[0].item())
+                    name = str(self.world_model.names[class_id]).strip().lower()
+                    if not should_keep_world_detection(name, confidence):
+                        continue
+                    coords = list(map(float, box.xyxy[0].tolist()))
+                    detections.append(
+                        _format_detection(
+                            name, confidence, coords, frame_width, frame_height, now
+                        )
+                    )
         return detections
 
     def detect_bytes(self, image_bytes: bytes) -> list[dict[str, Any]]:

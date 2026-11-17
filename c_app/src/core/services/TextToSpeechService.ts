@@ -3,6 +3,10 @@ import { createLogger } from '../utils/logger';
 
 const log = createLogger('TextToSpeechService');
 
+export function normalizeSpeechText(text: string): string {
+  return text.replace(/\bu\s*d\s*i\s*d\b/gi, 'U. D. I. D.');
+}
+
 type TtsModule = {
   getInitStatus: () => Promise<boolean>;
   setDefaultLanguage: (lang: string) => Promise<string | void>;
@@ -27,6 +31,7 @@ class TextToSpeechServiceImpl {
   private volume = 1.0;
   private currentSpeech: SpeechRequest | null = null;
   private onFinishBound: (() => void) | null = null;
+  private onCancelBound: (() => void) | null = null;
 
   static getInstance(): TextToSpeechServiceImpl {
     if (!TextToSpeechServiceImpl.instance) {
@@ -88,8 +93,9 @@ class TextToSpeechServiceImpl {
       }
 
       this.onFinishBound = () => this.handleUtteranceComplete();
+      this.onCancelBound = () => this.handleUtteranceCancelled();
       this.tts.addEventListener('tts-finish', this.onFinishBound);
-      this.tts.addEventListener('tts-cancel', this.onFinishBound);
+      this.tts.addEventListener('tts-cancel', this.onCancelBound);
       this.initialized = true;
       log.info('TTS initialized');
       return true;
@@ -123,17 +129,22 @@ class TextToSpeechServiceImpl {
   async speak(
     text: string,
     priority: SpeechPriority = 'normal',
-    callbacks?: { onDone?: () => void; onError?: (e: Error) => void },
+    callbacks?: {
+      onDone?: () => void;
+      onError?: (e: Error) => void;
+      onCancel?: () => void;
+    },
   ): Promise<string> {
     const id = `speech-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
     const request: SpeechRequest = {
       id,
-      text: text.trim(),
+      text: normalizeSpeechText(text.trim()),
       priority,
       createdAt: Date.now(),
       interruptible: priority !== 'critical',
       onDone: callbacks?.onDone,
       onError: callbacks?.onError,
+      onCancel: callbacks?.onCancel,
     };
 
     if (!request.text) {
@@ -150,7 +161,15 @@ class TextToSpeechServiceImpl {
     }
 
     if (priority === 'critical' || priority === 'high') {
-      this.queue = this.queue.filter(q => q.priority === 'critical');
+      const retained: SpeechRequest[] = [];
+      this.queue.forEach(queuedRequest => {
+        if (queuedRequest.priority === 'critical') {
+          retained.push(queuedRequest);
+        } else {
+          queuedRequest.onCancel?.();
+        }
+      });
+      this.queue = retained;
     }
 
     this.queue.push(request);
@@ -165,9 +184,13 @@ class TextToSpeechServiceImpl {
   }
 
   async stop(_interrupt = true): Promise<void> {
+    const queued = this.queue;
     this.queue = [];
-    this.speaking = false;
+    const active = this.currentSpeech;
     this.currentSpeech = null;
+    this.speaking = true;
+    active?.onCancel?.();
+    queued.forEach(request => request.onCancel?.());
     if (this.tts) {
       try {
         // Android stop() takes no args; iOS accepts optional boundary flag.
@@ -176,6 +199,35 @@ class TextToSpeechServiceImpl {
         log.warn('stop failed', error);
       }
     }
+    this.speaking = false;
+    void this.processQueue();
+  }
+
+  async cancel(id: string): Promise<void> {
+    const queuedIndex = this.queue.findIndex(request => request.id === id);
+    if (queuedIndex >= 0) {
+      const [cancelled] = this.queue.splice(queuedIndex, 1);
+      cancelled?.onCancel?.();
+      return;
+    }
+
+    const active = this.currentSpeech;
+    if (!active || active.id !== id) {
+      return;
+    }
+
+    this.speaking = true;
+    this.currentSpeech = null;
+    active.onCancel?.();
+    if (this.tts) {
+      try {
+        await Promise.resolve(this.tts.stop());
+      } catch (error) {
+        log.warn('cancel failed', error);
+      }
+    }
+    this.speaking = false;
+    void this.processQueue();
   }
 
   private async processQueue(): Promise<void> {
@@ -212,9 +264,23 @@ class TextToSpeechServiceImpl {
 
   private handleUtteranceComplete(): void {
     const finished = this.currentSpeech;
+    if (!finished) {
+      return;
+    }
     this.currentSpeech = null;
     this.speaking = false;
-    finished?.onDone?.();
+    finished.onDone?.();
+    void this.processQueue();
+  }
+
+  private handleUtteranceCancelled(): void {
+    const cancelled = this.currentSpeech;
+    if (!cancelled) {
+      return;
+    }
+    this.currentSpeech = null;
+    this.speaking = false;
+    cancelled.onCancel?.();
     void this.processQueue();
   }
 }

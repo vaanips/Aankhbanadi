@@ -11,11 +11,20 @@ interface DetectionsPanelProps {
   assistanceActive: boolean;
 }
 
-export function DetectionsPanel({ detections, assistanceActive }: DetectionsPanelProps): React.JSX.Element {
+export function DetectionsPanel({
+  detections,
+  assistanceActive,
+}: DetectionsPanelProps): React.JSX.Element {
   const { theme } = useTheme();
 
-  const summary = useMemo(() => DetectionGroupingService.summarize(detections), [detections]);
-  const directionGroups = useMemo(() => DetectionGroupingService.groupByDirection(detections), [detections]);
+  const summary = useMemo(
+    () => DetectionGroupingService.summarize(detections),
+    [detections],
+  );
+  const directionGroups = useMemo(
+    () => DetectionGroupingService.groupByDirection(detections),
+    [detections],
+  );
   const nearest = useMemo(() => {
     if (detections.length === 0) {
       return null;
@@ -27,17 +36,24 @@ export function DetectionsPanel({ detections, assistanceActive }: DetectionsPane
 
   return (
     <View
-      style={[styles.panel, { backgroundColor: theme.colors.surface, borderColor: theme.colors.border }]}
+      style={[
+        styles.panel,
+        {
+          backgroundColor: theme.colors.surface,
+          borderColor: theme.colors.border,
+        },
+      ]}
       accessibilityRole="summary"
-      accessibilityLabel={`Recent detections. ${summary}. Demo data only.`}>
-      <AppText variant="label">Recent detections (demo)</AppText>
+      accessibilityLabel={`Recent live detections. ${summary}.`}
+    >
+      <AppText variant="label">Recent detections</AppText>
       {!assistanceActive ? (
         <AppText variant="body" color="secondary">
-          Start assistance to stream mock detection updates.
+          Start assistance to begin live object detection.
         </AppText>
       ) : detections.length === 0 ? (
         <AppText variant="body" color="secondary">
-          Waiting for mock scene data…
+          Waiting for detections…
         </AppText>
       ) : (
         <>
@@ -45,8 +61,13 @@ export function DetectionsPanel({ detections, assistanceActive }: DetectionsPane
           <View style={styles.section}>
             <AppText variant="label">By direction</AppText>
             {directionGroups.map(group => (
-              <AppText key={group.direction} variant="caption" color="secondary">
-                {DetectionGroupingService.displayName(group.direction)}: {group.count} item
+              <AppText
+                key={group.direction}
+                variant="caption"
+                color="secondary"
+              >
+                {DetectionGroupingService.displayName(group.direction)}:{' '}
+                {group.count} item
                 {group.count === 1 ? '' : 's'}
               </AppText>
             ))}
@@ -62,7 +83,8 @@ export function DetectionsPanel({ detections, assistanceActive }: DetectionsPane
             </View>
           ) : null}
           <AppText variant="caption" color="secondary" style={styles.note}>
-            Bounding boxes are not drawn — Phase 1 uses labeled demo detections only.
+            Distances are estimates. Check your surroundings carefully and do
+            not rely on this app alone for safety.
           </AppText>
         </>
       )}

@@ -3,6 +3,7 @@ export type RootStackParamList = {
   Onboarding: undefined;
   Main: undefined;
   Help: undefined;
+  UdidAuth: undefined;
 };
 
 export type MainTabParamList = {
@@ -13,4 +14,6 @@ export type MainTabParamList = {
   Settings: undefined;
 };
 
-export type AppNavigationTarget = keyof RootStackParamList | keyof MainTabParamList;
+export type AppNavigationTarget =
+  | keyof RootStackParamList
+  | keyof MainTabParamList;

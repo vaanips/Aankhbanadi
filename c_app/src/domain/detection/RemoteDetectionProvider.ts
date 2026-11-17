@@ -8,6 +8,8 @@ import {
 } from './DetectionProvider';
 
 const log = createLogger('RemoteDetectionProvider');
+const HEALTH_TIMEOUT_MS = 4_000;
+const DETECTION_TIMEOUT_MS = 15_000;
 
 function normalizeDetection(raw: Record<string, unknown>): Detection {
   const directionRaw = String(raw.direction ?? 'center');
@@ -15,10 +17,10 @@ function normalizeDetection(raw: Record<string, unknown>): Detection {
     directionRaw === 'ahead' || directionRaw === 'center'
       ? 'center'
       : directionRaw === 'left'
-        ? 'left'
-        : directionRaw === 'right'
-          ? 'right'
-          : 'center';
+      ? 'left'
+      : directionRaw === 'right'
+      ? 'right'
+      : 'center';
 
   const box = (raw.boundingBox as Record<string, number> | undefined) ?? {
     x: 0,
@@ -31,16 +33,16 @@ function normalizeDetection(raw: Record<string, unknown>): Detection {
     raw.estimatedDistanceMeters != null
       ? Number(raw.estimatedDistanceMeters)
       : raw.distance != null
-        ? Number(raw.distance)
-        : undefined;
+      ? Number(raw.distance)
+      : undefined;
   const confidence = Number(raw.confidence ?? 0);
   const group = String(raw.category ?? raw.group ?? 'Object');
   const label =
     raw.label != null
       ? String(raw.label)
       : distance != null
-        ? `${group} ~${distance.toFixed(1)}m ${confidence.toFixed(2)}`
-        : `${group} ${confidence.toFixed(2)}`;
+      ? `${group} ~${distance.toFixed(1)}m ${confidence.toFixed(2)}`
+      : `${group} ${confidence.toFixed(2)}`;
 
   return {
     id: String(raw.id ?? `${Date.now()}`),
@@ -60,8 +62,7 @@ function normalizeDetection(raw: Record<string, unknown>): Detection {
     timestamp: Number(raw.timestamp ?? Date.now()),
     trackingId: raw.trackingId != null ? String(raw.trackingId) : undefined,
     label,
-    groupPhrase:
-      raw.groupPhrase != null ? String(raw.groupPhrase) : undefined,
+    groupPhrase: raw.groupPhrase != null ? String(raw.groupPhrase) : undefined,
   };
 }
 
@@ -72,6 +73,8 @@ export class RemoteDetectionProvider implements DetectionProvider {
   private serverUrl: string;
   private lastError: string | null = null;
   private inflight = false;
+  private errorLogged = false;
+  private generation = 0;
 
   constructor(serverUrl: string = DETECTION_SERVER_URL) {
     this.serverUrl = serverUrl.replace(/\/$/, '');
@@ -90,33 +93,50 @@ export class RemoteDetectionProvider implements DetectionProvider {
   }
 
   async ping(): Promise<boolean> {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), HEALTH_TIMEOUT_MS);
     try {
-      const res = await fetch(`${this.serverUrl}/health`, {method: 'GET'});
+      const res = await fetch(`${this.serverUrl}/health`, {
+        method: 'GET',
+        signal: controller.signal,
+      });
       if (!res.ok) {
         this.lastError = `Health ${res.status}`;
         return false;
       }
-      const json = (await res.json()) as {ok?: boolean; backend?: string};
+      const json = (await res.json()) as { ok?: boolean; backend?: string };
       this.lastError = null;
+      this.errorLogged = false;
       log.info('Server health', json);
       return Boolean(json.ok);
     } catch (error) {
-      this.lastError = error instanceof Error ? error.message : 'Server unreachable';
-      log.error('ping failed', error);
+      this.lastError =
+        error instanceof Error ? error.message : 'Server unreachable';
+      if (!this.errorLogged) {
+        log.warn('ping failed', error);
+        this.errorLogged = true;
+      }
       return false;
+    } finally {
+      clearTimeout(timeout);
     }
   }
 
   async start(): Promise<void> {
+    if (this.running) {
+      return;
+    }
     this.running = true;
+    const generation = ++this.generation;
     const ok = await this.ping();
-    if (!ok) {
+    if (generation === this.generation && !ok) {
       log.warn(`Detection server not reachable at ${this.serverUrl}`);
     }
   }
 
   async stop(): Promise<void> {
     this.running = false;
+    this.generation += 1;
     this.current = [];
     this.emit();
   }
@@ -143,12 +163,15 @@ export class RemoteDetectionProvider implements DetectionProvider {
       return this.current;
     }
     this.inflight = true;
+    const generation = this.generation;
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), DETECTION_TIMEOUT_MS);
     try {
       const normalized = filePath.startsWith('file://')
         ? filePath
         : filePath.startsWith('content://')
-          ? filePath
-          : `file://${filePath}`;
+        ? filePath
+        : `file://${filePath}`;
       const form = new FormData();
       form.append('file', {
         uri: normalized,
@@ -159,6 +182,7 @@ export class RemoteDetectionProvider implements DetectionProvider {
       const res = await fetch(`${this.serverUrl}/detect`, {
         method: 'POST',
         body: form,
+        signal: controller.signal,
         headers: {
           Accept: 'application/json',
         },
@@ -166,9 +190,13 @@ export class RemoteDetectionProvider implements DetectionProvider {
 
       if (!res.ok) {
         const text = await res.text();
-        this.lastError = `Detect ${res.status}: ${text.slice(0, 120)}`;
-        // warn (not error) so LogBox does not cover the camera every frame
-        log.warn(this.lastError);
+        if (this.running && generation === this.generation) {
+          this.lastError = `Detect ${res.status}: ${text.slice(0, 120)}`;
+          if (!this.errorLogged) {
+            log.warn(this.lastError);
+            this.errorLogged = true;
+          }
+        }
         return this.current;
       }
 
@@ -176,17 +204,26 @@ export class RemoteDetectionProvider implements DetectionProvider {
         detections?: Record<string, unknown>[];
         inferenceMs?: number;
       };
+      if (!this.running || generation !== this.generation) {
+        return this.current;
+      }
       this.current = (json.detections ?? []).map(normalizeDetection);
       this.lastError = null;
+      this.errorLogged = false;
       this.emit();
       return this.current;
     } catch (error) {
-      this.lastError =
-        error instanceof Error ? error.message : 'Upload failed';
-      // Common when Wi‑Fi blips — do not spam red LogBox overlays.
-      log.warn('processFrameFile failed', error);
+      if (this.running && generation === this.generation) {
+        this.lastError =
+          error instanceof Error ? error.message : 'Upload failed';
+        if (!this.errorLogged) {
+          log.warn('processFrameFile failed', error);
+          this.errorLogged = true;
+        }
+      }
       return this.current;
     } finally {
+      clearTimeout(timeout);
       this.inflight = false;
     }
   }

@@ -16,6 +16,7 @@ export interface SpeechRequest {
   interruptible?: boolean;
   onDone?: () => void;
   onError?: (error: Error) => void;
+  onCancel?: () => void;
 }
 
 export const SPEECH_PRIORITY_ORDER: Record<SpeechPriority, number> = {

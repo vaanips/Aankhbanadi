@@ -2,13 +2,14 @@
 $ErrorActionPreference = "Stop"
 
 $SourceApp = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
-$BuildRoot = "C:\d\capp"
+$BuildRoot = "C:\d\b$PID"
 $DistAndroid = Join-Path $SourceApp "dist\android"
 $JavaHome = "C:\Program Files\Android\Android Studio\jbr"
 $AndroidHome = Join-Path $env:LOCALAPPDATA "Android\Sdk"
 
 if (-not (Test-Path $JavaHome)) { throw "JAVA_HOME not found: $JavaHome" }
 if (-not (Test-Path $AndroidHome)) { throw "ANDROID_HOME not found: $AndroidHome" }
+if (Test-Path $BuildRoot) { throw "Temporary build path already exists: $BuildRoot" }
 
 $env:JAVA_HOME = $JavaHome
 $env:ANDROID_HOME = $AndroidHome
@@ -17,9 +18,6 @@ $env:Path = "$JavaHome\bin;$AndroidHome\platform-tools;$env:Path"
 
 Write-Host "Syncing sources to $BuildRoot ..."
 New-Item -ItemType Directory -Force -Path "C:\d" | Out-Null
-if (Test-Path $BuildRoot) {
-  cmd /c "rmdir /s /q `"$BuildRoot`"" | Out-Null
-}
 New-Item -ItemType Directory -Force -Path $BuildRoot | Out-Null
 robocopy $SourceApp $BuildRoot /E /XD node_modules android\.gradle android\app\build android\build .git dist /NFL /NDL /NJH /NJS /nc /ns /np | Out-Null
 
@@ -45,3 +43,6 @@ Write-Host "Android release artifacts:"
 Get-ChildItem $DistAndroid | ForEach-Object {
   Write-Host "  $($_.FullName) ($([math]::Round($_.Length/1MB,1)) MB)"
 }
+
+Set-Location $SourceApp
+Remove-Item -LiteralPath $BuildRoot -Recurse -Force

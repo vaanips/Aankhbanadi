@@ -16,7 +16,12 @@ from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 
 from detection_engine import engine
-from udid_auth import authenticate_udid_images, get_reader
+from udid_auth import (
+    analyze_card_position,
+    authenticate_udid_images,
+    decode_image,
+    get_reader,
+)
 
 app = FastAPI(title="Drishti Detection Server", version="1.1.0")
 app.add_middleware(
@@ -117,6 +122,27 @@ async def detect(file: UploadFile = File(...)) -> dict[str, Any]:
         "backend": _meta.get("backend"),
         "demoMode": False,
     }
+
+
+@app.post("/auth/guidance")
+async def auth_guidance(
+    file: UploadFile = File(...),
+) -> dict[str, Any]:
+    """
+    Real-time card positioning check for visually impaired users.
+    Returns status ('aligned', 'too_far', 'too_close', 'move_left', 'move_right',
+    'move_up', 'move_down', 'too_dark', 'too_bright', 'too_blurry', 'no_card')
+    with spoken instruction and alignment coordinates.
+    """
+    raw = await file.read()
+    if not raw:
+        raise HTTPException(status_code=400, detail="Empty guidance frame")
+    try:
+        frame = decode_image(raw)
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=400, detail=f"Invalid image: {exc}") from exc
+
+    return analyze_card_position(frame)
 
 
 @app.post("/auth/udid")

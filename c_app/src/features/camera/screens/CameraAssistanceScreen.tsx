@@ -2,6 +2,7 @@ import React, { useCallback, useMemo } from 'react';
 import { StyleSheet, View } from 'react-native';
 import {
   CompositeNavigationProp,
+  useFocusEffect,
   useNavigation,
 } from '@react-navigation/native';
 import type { BottomTabNavigationProp } from '@react-navigation/bottom-tabs';
@@ -11,18 +12,21 @@ import { Header } from '../../../components/layout/Header';
 import { AppText } from '../../../components/typography/AppText';
 import { PrimaryButton } from '../../../components/buttons/PrimaryButton';
 import { SecondaryButton } from '../../../components/buttons/SecondaryButton';
-import { DemoModeBanner } from '../../../components/status/DemoModeBanner';
 import { AssistantStatusBadge } from '../../../components/status/AssistantStatusBadge';
 import { IconButton } from '../../../components/buttons/IconButton';
 import { useCameraStore } from '../../../core/state/cameraStore';
 import { useVoiceStore } from '../../../core/state/voiceStore';
-import { MainTabParamList, RootStackParamList } from '../../../app/navigation/types';
+import {
+  MainTabParamList,
+  RootStackParamList,
+} from '../../../app/navigation/types';
 import { CameraPreviewPanel } from '../components/CameraPreviewPanel';
 import { DetectionsPanel } from '../components/DetectionsPanel';
 import { useCameraAssistance } from '../hooks/useCameraAssistance';
 import { useAssistantBootstrap } from '../../../hooks/useAssistantBootstrap';
 import { useVoicePushToTalk } from '../../../hooks/useVoicePushToTalk';
 import { useSettingsStore } from '../../../core/state/settingsStore';
+import { getRemoteProvider } from '../../../domain/detection/detectionRuntime';
 
 type CameraNavProp = CompositeNavigationProp<
   BottomTabNavigationProp<MainTabParamList, 'Camera'>,
@@ -34,6 +38,7 @@ export function CameraAssistanceScreen(): React.JSX.Element {
   const voiceState = useVoiceStore(state => state.state);
   const pushToTalk = useSettingsStore(state => state.pushToTalk);
   const lastError = useCameraStore(state => state.lastError);
+  const setLastError = useCameraStore(state => state.setLastError);
   const {
     detections,
     isActive,
@@ -44,7 +49,20 @@ export function CameraAssistanceScreen(): React.JSX.Element {
     openAppSettings,
     refreshPermission,
   } = useCameraAssistance();
-  const { onPressIn, onPressOut, toggleListening, isListening } = useVoicePushToTalk();
+  const { onPressIn, onPressOut, toggleListening, isListening } =
+    useVoicePushToTalk();
+  const handleFrameCaptured = useCallback(
+    async (path: string) => {
+      const provider = getRemoteProvider();
+      await provider.processFrameFile(path);
+      setLastError(
+        provider.getLastError()
+          ? 'Live detection is unavailable. Reconnect to the laptop to resume object detection.'
+          : null,
+      );
+    },
+    [setLastError],
+  );
 
   const navCallbacks = useMemo(
     () => ({
@@ -70,12 +88,23 @@ export function CameraAssistanceScreen(): React.JSX.Element {
     void stopAssistance();
   }, [stopAssistance]);
 
+  useFocusEffect(
+    useCallback(
+      () => () => {
+        void stopAssistance();
+      },
+      [stopAssistance],
+    ),
+  );
+
   const denied = permission === 'denied' || permission === 'blocked';
+  const starting = useCameraStore(
+    state => state.cameraState === 'INITIALIZING',
+  );
 
   return (
     <Screen scroll accessibilityLabel="Camera assistance">
-      <DemoModeBanner />
-      <Header title="Camera" subtitle="Scene assistance (demo)" />
+      <Header title="Camera" subtitle="Live scene assistance" />
       <View style={styles.content}>
         <View style={styles.statusRow}>
           <AssistantStatusBadge status={voiceState} />
@@ -84,13 +113,17 @@ export function CameraAssistanceScreen(): React.JSX.Element {
           </AppText>
         </View>
 
-        <CameraPreviewPanel canShowLivePreview={canShowLivePreview && !denied} />
+        <CameraPreviewPanel
+          canShowLivePreview={canShowLivePreview && !denied}
+          active={isActive}
+          onFrameCaptured={handleFrameCaptured}
+        />
 
         {denied ? (
           <View style={styles.permissionBlock}>
             <AppText variant="body" accessibilityRole="alert">
-              Camera permission is {permission}. Allow camera access in settings for a live preview, or continue with
-              demo detections only.
+              Camera permission is {permission}. Allow camera access in settings
+              to use live object detection.
             </AppText>
             <SecondaryButton
               label="Open device settings"
@@ -110,16 +143,22 @@ export function CameraAssistanceScreen(): React.JSX.Element {
 
         <View style={styles.actions}>
           <PrimaryButton
-            label={isActive ? 'Assistance running' : 'Start assistance'}
+            label={
+              isActive
+                ? 'Assistance running'
+                : starting
+                ? 'Starting…'
+                : 'Start live assistance'
+            }
             onPress={handleStart}
-            disabled={isActive}
-            accessibilityHint="Starts mock detection stream and optional live preview"
+            disabled={isActive || starting}
+            accessibilityHint="Starts the camera and live object detection"
           />
           <SecondaryButton
             label="Stop assistance"
             onPress={handleStop}
-            disabled={!isActive}
-            accessibilityHint="Stops mock detections"
+            disabled={!isActive && !starting}
+            accessibilityHint="Stops live object detection"
           />
         </View>
 
@@ -127,10 +166,16 @@ export function CameraAssistanceScreen(): React.JSX.Element {
           <IconButton
             icon="🎤"
             accessibilityLabel="Microphone push to talk"
-            accessibilityHint={pushToTalk ? 'Press and hold to speak' : 'Tap to toggle listening'}
-            onPress={pushToTalk ? () => {} : () => {
-              void toggleListening();
-            }}
+            accessibilityHint={
+              pushToTalk ? 'Press and hold to speak' : 'Tap to toggle listening'
+            }
+            onPress={
+              pushToTalk
+                ? () => {}
+                : () => {
+                    void toggleListening();
+                  }
+            }
             onPressIn={pushToTalk ? onPressIn : undefined}
             onPressOut={pushToTalk ? onPressOut : undefined}
           />
@@ -142,7 +187,12 @@ export function CameraAssistanceScreen(): React.JSX.Element {
         <DetectionsPanel detections={detections} assistanceActive={isActive} />
 
         {lastError ? (
-          <AppText variant="caption" color="danger">
+          <AppText
+            variant="caption"
+            color="secondary"
+            accessibilityRole="alert"
+            accessibilityLiveRegion="polite"
+          >
             {lastError}
           </AppText>
         ) : null}

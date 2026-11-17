@@ -2,11 +2,11 @@
 
 **See Beyond Vision.**
 
-Drishti is a React Native (CLI / bare) assistive companion for visually impaired and low-vision users. Phase 1 delivers the full mobile foundation: voice assistant, TTS, speech recognition, camera assistance UI, accessibility settings, and a mock detection layer ready for YOLO26x in Phase 2.
+Drishti is a React Native (CLI / bare) assistive companion for visually impaired and low-vision users. The Android app includes voice assistance, accessible UDID scanning, and live camera detection through a free local laptop server.
 
 > **Not Expo.** This is a native React Native CLI project with Android and iOS folders.
 
-> **Phase 1 detection is DEMO MODE only.** Object data comes from `MockDetectionProvider`. No YOLO model is connected.
+> Live object detection and UDID OCR require the local server and its model/OCR dependencies. Detection is not available offline on the phone in this build.
 
 ---
 
@@ -103,27 +103,25 @@ npm run ios
 
 ---
 
-## Current UX (simple mode + laptop GPU)
+## Live camera and UDID scanning (local network)
 
-App opens **directly to full-screen camera** with **one mic button** (same idea as `blind_v1.py` + key **M**).
+From Home, choose **Start Camera Assistance** to capture frames, send them to the laptop detector, show returned detections, and hear nearby objects announced. Spoken detections below 0.40 confidence are suppressed, and queued detection speech is replaced when a newer frame changes the result. Choose **Scan disability ID** to read a UDID card with the phone camera and local OCR. Auto-scan begins when the ID number and Disability Type are readable; the full card does not need to fit in the frame. Both flows require the laptop server; no paid cloud service is used.
 
-Phone captures frames → laptop runs **YOLO26x on CUDA** → detections return for TTS / voice answers.
+The server loads the model once and stays running for both features. Running `start.ps1` again reuses an existing healthy local server instead of starting another copy.
 
-### 1. Start GPU server on this PC
+### 1. Start the local detection server on this PC
 
 ```powershell
-cd C:\Users\srane\OneDrive\Desktop\Drishti\server
+cd C:\Users\srane\Aankhbanadi\server
 .\start.ps1
 ```
 
-Server: `http://0.0.0.0:8765`  
-Phone uses Wi‑Fi IP in `c_app/src/core/utils/serverConfig.ts` (currently `192.168.0.108`).
+The server uses the laptop GPU when available and CPU otherwise. It loads the model once and stays running.
+The phone uses the laptop Wi-Fi IP in `src/core/utils/serverConfig.ts`. Keep it aligned with the address printed by `start.ps1` and allow Windows Firewall inbound TCP **8765** on private networks.
 
-### 2. Run the app
+### 2. Install and use the app
 
-Same Wi‑Fi as the laptop. Keep Metro running, then `npm run android`.
-
-Allow Windows Firewall inbound TCP **8765** if the phone cannot connect.
+Install `dist/android/Drishti-release.apk` on the phone and keep the phone and laptop on the same Wi-Fi. Metro is not needed for an installed release APK. The local laptop server must remain running for object detection and UDID OCR; no paid cloud is used.
 
 ---
 
@@ -142,7 +140,19 @@ src/
   theme/                   Light/dark design system
 ```
 
-**Phase 2 integration point:** implement a real `DetectionProvider` (YOLO26x adapter) and swap it in `src/domain/detection/detectionRuntime.ts`. UI, voice, and query layers stay unchanged.
+**Accuracy note:** model weights and a validation dataset are not stored in this repository. A prior “76%” result cannot be independently verified here, and changing inference thresholds without measuring precision/recall could make safety alerts less reliable. Use `accuracy.py` with the exact weights and COCO validation data to compare measured mAP before tuning.
+
+## Build Android APK
+
+On Windows, with Node.js, Android Studio/JDK 17, and Android SDK installed:
+
+```powershell
+cd c_app
+npm ci
+npm run release:android
+```
+
+The installable APK is written to `dist/android/Drishti-release.apk`. This release uses the repository's debug signing key and is intended for testing, not Play Store publication.
 
 ---
 

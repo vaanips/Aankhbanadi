@@ -14,15 +14,22 @@ export class AnnouncementManager {
   private enabled = true;
   private paused = false;
   private lastSpokenKey: string | null = null;
+  private currentItem: AnnouncementItem | null = null;
+  private currentSpeechId: string | null = null;
+  private speechGeneration = 0;
 
   enable(): void {
     this.enabled = true;
+    this.lastSpokenKey = null;
     useVoiceStore.getState().setAnnouncementsEnabled(true);
+    void this.pump();
   }
 
   disable(): void {
     this.enabled = false;
     this.queue.clear();
+    this.invalidateCurrentSpeech();
+    this.lastSpokenKey = null;
     useVoiceStore.getState().setAnnouncementsEnabled(false);
     void TextToSpeechService.stop(true);
   }
@@ -55,6 +62,7 @@ export class AnnouncementManager {
     text: string,
     priority: SpeechPriority = 'normal',
     dedupeKey?: string,
+    scope?: string,
   ): boolean {
     if (!this.enabled || !useSettingsStore.getState().voiceEnabled) {
       return false;
@@ -62,7 +70,7 @@ export class AnnouncementManager {
     if (this.paused || AudioSessionService.areAnnouncementsPausedForListening()) {
       return false;
     }
-    const item = this.queue.enqueue(text, priority, dedupeKey);
+    const item = this.queue.enqueue(text, priority, dedupeKey, scope);
     if (!item) {
       return false;
     }
@@ -70,9 +78,36 @@ export class AnnouncementManager {
     return true;
   }
 
+  announceLatest(
+    text: string,
+    priority: SpeechPriority,
+    dedupeKey: string,
+    scope: string,
+  ): boolean {
+    this.queue.clearScope(scope);
+    const speechId = this.invalidateCurrentSpeech(scope);
+    if (speechId) {
+      void TextToSpeechService.cancel(speechId);
+    }
+    this.lastSpokenKey = null;
+    return this.announce(text, priority, dedupeKey, scope);
+  }
+
+  clearScope(scope: string): void {
+    this.queue.clearScope(scope);
+    const speechId = this.invalidateCurrentSpeech(scope);
+    if (speechId) {
+      void TextToSpeechService.cancel(speechId);
+    }
+    void this.pump();
+  }
+
   clear(): void {
     this.queue.clear();
-    this.processing = false;
+    const speechId = this.invalidateCurrentSpeech();
+    if (speechId) {
+      void TextToSpeechService.cancel(speechId);
+    }
     this.lastSpokenKey = null;
   }
 
@@ -106,29 +141,66 @@ export class AnnouncementManager {
 
     this.processing = true;
     this.queue.dequeue();
+    this.currentItem = item;
+    const generation = ++this.speechGeneration;
 
     try {
       const rate = useSettingsStore.getState().speechRate;
       const volume = useSettingsStore.getState().speechVolume;
       await TextToSpeechService.setRate(rate);
+      if (generation !== this.speechGeneration) {
+        return;
+      }
       TextToSpeechService.setVolume(volume);
-      await TextToSpeechService.speak(item.text, item.priority, {
-        onDone: () => {
-          this.lastSpokenKey = key;
-          this.processing = false;
-          void this.pump();
-        },
+      const speechId = await TextToSpeechService.speak(item.text, item.priority, {
+        onDone: () => this.finishSpeech(item, generation, key, true),
         onError: error => {
           log.warn('Announcement TTS error', error);
-          this.processing = false;
-          void this.pump();
+          this.finishSpeech(item, generation, key, false);
         },
+        onCancel: () => this.finishSpeech(item, generation, key, false),
       });
+      if (generation !== this.speechGeneration) {
+        await TextToSpeechService.cancel(speechId);
+        return;
+      }
+      if (this.currentItem?.id === item.id) {
+        this.currentSpeechId = speechId;
+      }
     } catch (error) {
       log.error('Failed to speak announcement', error);
-      this.processing = false;
-      void this.pump();
+      this.finishSpeech(item, generation, key, false);
     }
+  }
+
+  private finishSpeech(
+    item: AnnouncementItem,
+    generation: number,
+    key: string,
+    spoken: boolean,
+  ): void {
+    if (generation !== this.speechGeneration || this.currentItem?.id !== item.id) {
+      return;
+    }
+    this.currentItem = null;
+    this.currentSpeechId = null;
+    this.processing = false;
+    if (spoken) {
+      this.lastSpokenKey = key;
+    }
+    void this.pump();
+  }
+
+  private invalidateCurrentSpeech(scope?: string): string | null {
+    if (!this.currentItem || (scope && this.currentItem.scope !== scope)) {
+      return null;
+    }
+    this.speechGeneration += 1;
+    const speechId = this.currentSpeechId;
+    this.currentSpeechId = null;
+    this.currentItem = null;
+    this.processing = false;
+    return speechId;
   }
 
   handleDetectionAnnouncement(text: string, dedupeKey: string): void {
